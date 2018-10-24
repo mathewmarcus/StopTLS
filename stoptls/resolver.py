@@ -6,6 +6,7 @@ dns_cache = {}
 
 
 async def dns_resolve(hostname):
+    hostname = hostname.split(':')[0]
     try:
         return dns_cache[hostname]
     except KeyError:
@@ -14,4 +15,6 @@ async def dns_resolve(hostname):
                                                                 family=socket.AF_INET,
                                                                 type=socket.SOCK_STREAM,
                                                                 proto=socket.SOL_TCP)
-        return addrinfo[0][4][0]
+        ip = addrinfo[0][4][0]
+        dns_cache[hostname] = ip
+        return ip

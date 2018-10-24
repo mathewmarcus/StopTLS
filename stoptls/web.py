@@ -1,5 +1,6 @@
 import asyncio
-from aiohttp import web
+import aiohttp.web
+import urllib.parse
 from resolver import dns_resolve
 
 
@@ -20,13 +21,39 @@ def strip_request_headers(headers):
     return headers
 
 
-async def strip(request):
-    orig_headers = dict(request.headers)
-    headers = strip_request_headers(orig_headers)
+async def proxy_request(request, session):
+        orig_headers = dict(request.headers)
+        headers = strip_request_headers(orig_headers)
 
-    sock = await dns_resolve(headers['Host'])
+        host = await dns_resolve(request.host)
 
-    return web.Response(text=sock)
+        scheme, netloc, path, params, query, frag = urllib.parse.urlparse(request.url)
+        url = urllib.parse.urlunparse(request.scheme, host, request.path, params, request.query_string, frag)
+
+        method = request.method.lower()
+
+        data = request.content if request.body_exists else None
+
+        async with session.request(method, url, data=data, headers=headers) as response:
+            return response
+
+
+class Handler(object):
+    def __init__(self):
+        self.session = aiohttp.ClientSession()
+
+    async def strip(self, request):
+        response = await proxy_request(request, self.session)
+        return response
+
+
+# async def strip(request):
+#     orig_headers = dict(request.headers)
+#     headers = strip_request_headers(orig_headers)
+
+#     sock = await dns_resolve(headers['Host'])
+
+#     return asyncio.web.Response(text=sock)
 
 
 async def web_main():
@@ -35,7 +62,10 @@ async def web_main():
     #    1. It has a seperate, individual port/handler
     #    2. It uses loop.start_server instead of create_server,
     #       in order to mimic the aiohttp documentation
-    server = await asyncio.get_running_loop().create_server(web.Server(strip),
+
+    handler = Handler()
+
+    server = await asyncio.get_running_loop().create_server(aiohttp.web.Server(handler.strip),
                                                             None,
                                                             8080)
     print("======= Serving HTTP on 127.0.0.1:8080 ======")
@@ -55,5 +85,6 @@ async def generic_tcp_main():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    servers = asyncio.shield(asyncio.gather(web_main(), generic_tcp_main()))
-    loop.run_until_complete(servers)
+    # servers = asyncio.gather(web_main(), generic_tcp_main())
+    loop.run_until_complete(asyncio.wait([asyncio.ensure_future(web_main()), asyncio.ensure_future(generic_tcp_main())]))
+    # loop.run_until_complete(servers)
