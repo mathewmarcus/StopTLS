@@ -1,5 +1,6 @@
 import asyncio
 from aiohttp import web
+from resolver import dns_resolve
 
 
 REQUEST_HEADER_BLACKLIST = [
@@ -12,16 +13,20 @@ RESPONSE_HEADER_BLACKLIST = [
 
 
 def strip_request_headers(headers):
+    headers = dict(headers)
     for header in REQUEST_HEADER_BLACKLIST:
-        try:
-            headers.pop('Upgrade-Insecure-Requests', None)
-        except KeyError:
-            pass
+        headers.pop(header, None)
+
+    return headers
 
 
 async def strip(request):
-    print('hi')
-    return web.Response(text="Hello world!")
+    orig_headers = dict(request.headers)
+    headers = strip_request_headers(orig_headers)
+
+    sock = await dns_resolve(headers['Host'])
+
+    return web.Response(text=sock)
 
 
 async def web_main():
