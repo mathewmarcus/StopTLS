@@ -1,5 +1,6 @@
 import asyncio
 import aiohttp.web
+import bs4
 import urllib.parse
 from resolver import dns_resolve
 
@@ -13,6 +14,9 @@ RESPONSE_HEADER_BLACKLIST = [
 ]
 
 
+url_tracker = {}
+
+
 def strip_request_headers(headers):
     headers = dict(headers)
     for header in REQUEST_HEADER_BLACKLIST:
@@ -21,39 +25,60 @@ def strip_request_headers(headers):
     return headers
 
 
-async def proxy_request(request, session):
+
+class Handler(object):
+    def __init__(self):
+        self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
+        # self.session = aiohttp.ClientSession(connector=self._tcp_connector)
+        self.session = aiohttp.ClientSession(self._tcp_connector)
+        self.stripped_urls = {}
+
+    async def strip(self, request):
+        request['remote_socket'] = '{}:{}'.format(*request.transport.get_extra_info('peername'))
+        response = await self.proxy_request(request)
+        return response
+
+    async def proxy_request(self, request):
         orig_headers = dict(request.headers)
         headers = strip_request_headers(orig_headers)
 
-        host = await dns_resolve(request.host)
+        try:
+            if (request.host + request.rel_url.human_repr()) in self.stripped_urls[request['remote_ip']]:
+                scheme = 'https'
+        except KeyError:
+            scheme = request.scheme
+        else:
+            scheme = request.scheme
 
-        scheme, netloc, path, params, query, frag = urllib.parse.urlparse(request.url)
-        url = urllib.parse.urlunparse(request.scheme, host, request.path, params, request.query_string, frag)
+        url = urllib.parse.urlunsplit((scheme,
+                                       request.host,
+                                       request.path,
+                                       request.query_string,
+                                       request.url.fragment))
 
         method = request.method.lower()
 
         data = request.content if request.body_exists else None
 
-        async with session.request(method, url, data=data, headers=headers) as response:
+        async with self.session.request(method,
+                                        url,
+                                        data=data,
+                                        headers=headers,
+                                        allow_redirects=False) as response:
             return response
 
+    async def strip_response(response):
+        # strip urls from headers
 
-class Handler(object):
-    def __init__(self):
-        self.session = aiohttp.ClientSession()
+        # strip urls from HTML and Javascript bodies
 
-    async def strip(self, request):
-        response = await proxy_request(request, self.session)
-        return response
+        # remove SECURE flag from cookies
+        pass
 
-
-# async def strip(request):
-#     orig_headers = dict(request.headers)
-#     headers = strip_request_headers(orig_headers)
-
-#     sock = await dns_resolve(headers['Host'])
-
-#     return asyncio.web.Response(text=sock)
+    async def kill_sessions(request):
+        # remove existing cookies
+        # potentiall remove Authorization: Bearer entries
+        pass
 
 
 async def web_main():
@@ -61,10 +86,9 @@ async def web_main():
     # rather than raw asyncio. As such, it differs in two ways
     #    1. It has a seperate, individual port/handler
     #    2. It uses loop.start_server instead of create_server,
-    #       in order to mimic the aiohttp documentation
+    #       in order to adhere to the aiohttp documentation
 
     handler = Handler()
-
     server = await asyncio.get_running_loop().create_server(aiohttp.web.Server(handler.strip),
                                                             None,
                                                             8080)
@@ -85,6 +109,6 @@ async def generic_tcp_main():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    # servers = asyncio.gather(web_main(), generic_tcp_main())
-    loop.run_until_complete(asyncio.wait([asyncio.ensure_future(web_main()), asyncio.ensure_future(generic_tcp_main())]))
-    # loop.run_until_complete(servers)
+    servers = asyncio.gather(web_main(), generic_tcp_main())
+    # loop.run_until_complete(asyncio.wait([asyncio.ensure_future(web_main()), asyncio.ensure_future(generic_tcp_main())], return_when=asyncio.FIRST_EXCEPTION))
+    loop.run_until_complete(servers)
