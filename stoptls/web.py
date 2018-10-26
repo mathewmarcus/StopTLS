@@ -7,16 +7,22 @@ import re
 
 HEADER_BLACKLIST = {
     'request': [
-        'Upgrade-Insecure-Requests'
+        'Upgrade-Insecure-Requests',
+        'Host'
     ],
     'response': [
-        'Strict-Transport-Security'
+        'Strict-Transport-Security',
+        'Content-Length',
+        'Content-Encoding',
+        'Transfer-Encoding',
     ]
 }
 
 # SECURE_URL = re.compile('^https://.+', flags=re.IGNORECASE)
 SECURE_URL = re.compile('(https)(:\/\/[a-zA-z0-9.\/?\-#=]+)',
                         flags=re.IGNORECASE)
+COOKIE_SECURE_FLAG = re.compile('Secure;?',
+                                flags=re.IGNORECASE)
 
 url_tracker = {}
 
@@ -41,9 +47,6 @@ class Handler(object):
         return await self.strip_response(response, request['remote_socket'])
 
     async def proxy_request(self, request):
-        orig_headers = dict(request.headers)
-        headers = strip_headers(orig_headers, 'request')
-
         try:
             if (request.rel_url.human_repr()) in self.cache[request['remote_socket']][request.host]['rel_urls']:
                 scheme = 'https'
@@ -60,15 +63,29 @@ class Handler(object):
         method = request.method.lower()
         data = request.content if request.body_exists else None
 
+        orig_headers = dict(request.headers)
+        headers = strip_headers(orig_headers, 'request')
+
         return await self.session.request(method,
                                           url,
                                           data=data,
-                                          headers=headers)
+                                          headers=headers,
+                                          max_redirects=100)
                                           # allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
     async def strip_response(self, response, remote_socket):
-        # strip secure URL from location header
+        # strip secure URLs from HTML and Javascript bodies
+        if response.content_type == 'text/html':
+            body = self.strip_html_body(await response.text(), remote_socket)
+        elif response.content_type == 'application/javascript':
+            body = self.strip_javascript_body(await response.text(), remote_socket)
+        else:
+            # eventually use aiohttp.web.StreamResponse in order to avoid reading whole
+            # request body into memory
+            body = await response.read()
+            # response.release()
 
+        # strip secure URL from location header
         headers = strip_headers(dict(response.headers), 'response')
         try:
             location = headers['Location']
@@ -79,29 +96,17 @@ class Handler(object):
         except KeyError:
             pass
 
-        # strip secure URLs from HTML and Javascript bodies
-        if response.content_type == 'text/html':
-            body = self.strip_html_body(await response.text(), remote_socket)
-            headers.pop('Content-Length')
-            headers.pop('Content-Encoding', None)
-        elif response.content_type == 'application/javascript':
-            body = self.strip_javascript_body(await response.text(), remote_socket)
-            headers.pop('Content-Length')
-            headers.pop('Content-Encoding', None)
-        else:
-            # eventually use aiohttp.web.StreamResponse in order to avoid reading whole
-            # request body into memory
-            body = await response.read()
-            headers.pop('Content-Length')
-            headers.pop('Content-Encoding', None)
-            # response.release()
-        
-        # remove SECURE flag from cookies
+        # remove secure flag from cookies
+        try:
+            headers['Set-Cookie'] = COOKIE_SECURE_FLAG.sub(r'',
+                                                           headers['Set-Cookie'])
+        except KeyError:
+            pass
 
         return aiohttp.web.Response(body=body,
                                     status=response.status,
-                                    headers=headers)
-
+                                    headers=headers)    
+        
     def strip_html_body(self, body, remote_socket):
         soup = bs4.BeautifulSoup(body, 'html.parser')
         secure_url_attrs = []
@@ -109,6 +114,9 @@ class Handler(object):
         def has_secure_url_attr(tag):
             found = False
             for attr_name, attr_value in tag.attrs.items():
+                if isinstance(attr_value, list):
+                    attr_value = ' '.join(attr_value)
+                    
                 if SECURE_URL.fullmatch(attr_value):
                     secure_url_attrs.append(attr_name)
                     parsed_url = urllib.parse.urlsplit(attr_value)
