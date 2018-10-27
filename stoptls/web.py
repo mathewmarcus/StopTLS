@@ -20,7 +20,7 @@ HEADER_BLACKLIST = {
 }
 
 # SECURE_URL = re.compile('^https://.+', flags=re.IGNORECASE)
-SECURE_URL = re.compile('(https)(:\/\/[a-zA-z0-9.\/?\-#=]+)',
+SECURE_URL = re.compile('(https)(:\/\/[a-zA-z0-9.\/?\-#=&;%:~_$@+()]+)',
                         flags=re.IGNORECASE)
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
@@ -142,7 +142,7 @@ class Handler(object):
             for attr_name, attr_value in tag.attrs.items():
                 if isinstance(attr_value, list):
                     attr_value = ' '.join(attr_value)
-                    
+
                 if SECURE_URL.fullmatch(attr_value):
                     secure_url_attrs.append(attr_name)
                     parsed_url = urllib.parse.urlsplit(attr_value)
@@ -157,6 +157,9 @@ class Handler(object):
         for index, tag in enumerate(secure_tags):
             secure_url = tag[secure_url_attrs[index]]
             tag[secure_url_attrs[index]] = secure_url.replace('https://', 'http://')
+
+        # strip secure URLs from <script> blocks
+        
 
         return str(soup)
 
