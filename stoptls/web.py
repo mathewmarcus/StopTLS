@@ -19,11 +19,11 @@ HEADER_BLACKLIST = {
     ]
 }
 
-# SECURE_URL = re.compile('^https://.+', flags=re.IGNORECASE)
-SECURE_URL = re.compile('(https)(:\/\/[a-zA-z0-9.\/?\-#=&;%:~_$@+()]+)',
+SECURE_URL = re.compile('(https)(:(\/\/|\\\\x2[Ff]\\\\x2[Ff])[a-zA-z0-9.\/?\-#=&;%:~_$@+()\\\\]+)',
                         flags=re.IGNORECASE)
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
+CSS_OR_SCRIPT = re.compile('^script$|^style$')
 
 url_tracker = {}
 
@@ -91,8 +91,8 @@ class Handler(object):
         # strip secure URLs from HTML and Javascript bodies
         if response.content_type == 'text/html':
             body = self.strip_html_body(await response.text(), remote_socket)
-        elif response.content_type == 'application/javascript':
-            body = self.strip_javascript_body(await response.text(), remote_socket)
+        elif response.content_type == 'application/javascript' or response.content_type == 'text/css':
+            body = self.strip_text(await response.text(), remote_socket)
         else:
             body = await response.read()
             # response.release()
@@ -158,12 +158,14 @@ class Handler(object):
             secure_url = tag[secure_url_attrs[index]]
             tag[secure_url_attrs[index]] = secure_url.replace('https://', 'http://')
 
-        # strip secure URLs from <script> blocks
-        
+        # strip secure URLs from <style> and <script> blocks
+        css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
+        for tag in css_or_script_tags:
+            tag.string = self.strip_text(tag.string, remote_socket)
 
         return str(soup)
 
-    def strip_javascript_body(self, body, remote_socket):
+    def strip_text(self, body, remote_socket):
         def generate_unsecure_replacement(secure_url):
             parsed_url = urllib.parse.urlsplit(secure_url.group(0))
             rel_url = ''.join(parsed_url[2:4])
@@ -177,7 +179,7 @@ async def web_main():
     # HTTP is a special case because it uses aiohttp
     # rather than raw asyncio. As such, it differs in two ways
     #    1. It has a seperate, individual port/handler
-    #    2. It uses loop.start_server instead of create_server,
+    #    2. It uses loop.create_server instead of start_server,
     #       in order to adhere to the aiohttp documentation
 
     handler = Handler()
