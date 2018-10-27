@@ -4,6 +4,8 @@ import bs4
 import urllib.parse
 import re
 
+from cache import InMemoryCache
+
 
 HEADER_BLACKLIST = {
     'request': [
@@ -40,7 +42,7 @@ class Handler(object):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
         self.session = aiohttp.ClientSession(connector=self._tcp_connector,
                                              cookie_jar=aiohttp.DummyCookieJar())
-        self.cache = {}
+        self.cache = InMemoryCache()
 
     async def strip(self, request):
         request['remote_socket'] = '{}:{}'.format(*request.transport.get_extra_info('peername'))
@@ -49,22 +51,17 @@ class Handler(object):
 
     async def proxy_request(self, request):
         # check if URL was previously stripped and cached
-        try:
-            if (request.rel_url.human_repr()) in self.cache[request['remote_socket']][request.host]['rel_urls']:
-                scheme = 'https'
-        except KeyError:
-            scheme = request.scheme
-        else:
-            scheme = request.scheme
+        scheme = 'https' \
+            if self.cache.has_url(request['remote_socket'],
+                                  request.host,
+                                  request.rel_url.human_repr()) \
+            else 'http'
 
         # Kill sesssions
         for cookie in request.cookies.keys():
-            try:
-                if cookie in self.cache[request['remote_socket']][request.host]['cookies']:
-                    continue
-
-                del request.cookies[cookie]
-            except KeyError:
+            if not self.cache.has_cookie(request['remote_socket'],
+                                         request.host,
+                                         cookie):
                 del request.cookies[cookie]
 
         # potentially also remove certain types of auth (e.g. Authentication: Bearer)
@@ -80,6 +77,7 @@ class Handler(object):
         orig_headers = dict(request.headers)
         headers = strip_headers(orig_headers, 'request')
 
+        #TODO: pass cookies
         return await self.session.request(method,
                                           url,
                                           data=data,
@@ -97,14 +95,13 @@ class Handler(object):
             body = await response.read()
             # response.release()
 
-        # strip secure URL from location header
         headers = strip_headers(dict(response.headers), 'response')
+
+        # strip secure URL from location header
         try:
             location = headers['Location']
             headers['Location'] = location.replace('https://', 'http://')
-            parsed_url = urllib.parse.urlsplit(location)
-            rel_url = ''.join(parsed_url[2:4])
-            self.cache.setdefault(remote_socket, {}).setdefault(parsed_url[1], {}).setdefault('rel_urls', set([])).add(rel_url)
+            self.cache.add_url(remote_socket, location)
         except KeyError:
             pass
 
@@ -115,7 +112,9 @@ class Handler(object):
         # remove secure flag from cookies
         for cookie_name, cookie_directives in response.cookies.items():
             # cache newly-set cookies
-            self.cache.setdefault(remote_socket, {}).setdefault(response.url.host, {}).setdefault('cookies', set([])).add(cookie_name)
+            self.cache.add_cookie(remote_socket,
+                                  response.url.host,
+                                  cookie_name)
 
             # remove "secure" directive
             cookie_directives.pop('secure', None)
@@ -131,6 +130,8 @@ class Handler(object):
             stripped_response.set_cookie(cookie_name,
                                          cookie_directives.value,
                                          **stripped_directives)
+        import pdb; pdb.set_trace()
+
         return stripped_response
 
     def strip_html_body(self, body, remote_socket):
@@ -145,9 +146,7 @@ class Handler(object):
 
                 if SECURE_URL.fullmatch(attr_value):
                     secure_url_attrs.append(attr_name)
-                    parsed_url = urllib.parse.urlsplit(attr_value)
-                    rel_url = ''.join(parsed_url[2:4])
-                    self.cache.setdefault(remote_socket, {}).setdefault(parsed_url[1], {}).setdefault('rel_urls', set([])).add(rel_url)
+                    self.cache.add_url(remote_socket, attr_value)
                     found = True
 
             return found
@@ -167,9 +166,7 @@ class Handler(object):
 
     def strip_text(self, body, remote_socket):
         def generate_unsecure_replacement(secure_url):
-            parsed_url = urllib.parse.urlsplit(secure_url.group(0))
-            rel_url = ''.join(parsed_url[2:4])
-            self.cache.setdefault(remote_socket, {}).setdefault(parsed_url[1], {}).setdefault('rel_urls', set([])).add(rel_url)
+            self.cache.add_url(remote_socket, secure_url.group(0))
             return 'http' + secure_url.group(2)
 
         return SECURE_URL.sub(generate_unsecure_replacement, body)
