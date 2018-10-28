@@ -57,14 +57,16 @@ class Handler(object):
                                   request.rel_url.human_repr()) \
             else 'http'
 
-        # Kill sesssions
-        for cookie in request.cookies.keys():
-            if not self.cache.has_cookie(request['remote_socket'],
-                                         request.host,
-                                         cookie):
-                del request.cookies[cookie]
+        orig_headers = dict(request.headers)
+        headers = strip_headers(orig_headers, 'request')
 
-        # potentially also remove certain types of auth (e.g. Authentication: Bearer)
+        # Kill sesssions
+        cookies = self.filter_incoming_cookies(request.cookies,
+                                               request['remote_socket'],
+                                               request.host)
+        headers['Cookie'] = '; '.join(cookies)
+
+        # TODO: possibly also remove certain types of auth (e.g. Authentication: Bearer)
 
         url = urllib.parse.urlunsplit((scheme,
                                        request.host,
@@ -74,14 +76,12 @@ class Handler(object):
         method = request.method.lower()
         data = request.content if request.body_exists else None
 
-        orig_headers = dict(request.headers)
-        headers = strip_headers(orig_headers, 'request')
-
-        #TODO: pass cookies
+        #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies
         return await self.session.request(method,
                                           url,
                                           data=data,
                                           headers=headers,
+                                          cookies=request.cookies,
                                           max_redirects=100)
                                           # allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
@@ -130,8 +130,6 @@ class Handler(object):
             stripped_response.set_cookie(cookie_name,
                                          cookie_directives.value,
                                          **stripped_directives)
-        import pdb; pdb.set_trace()
-
         return stripped_response
 
     def strip_html_body(self, body, remote_socket):
@@ -170,6 +168,13 @@ class Handler(object):
             return 'http' + secure_url.group(2)
 
         return SECURE_URL.sub(generate_unsecure_replacement, body)
+
+    def filter_incoming_cookies(self, cookies, remote_socket, host):
+        for name, value in cookies.items():
+            if self.cache.has_cookie(remote_socket,
+                                     host,
+                                     name):
+                yield '{}={}'.format(name, value)
 
 
 async def web_main():
