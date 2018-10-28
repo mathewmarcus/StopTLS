@@ -30,9 +30,13 @@ class InMemoryCache(Cache):
     def add_url(self, remote_socket, url):
         # unescape URL
         # In the future, potentially also remove %-encoded chars
-        unescaped_url = bytes(url, 'ascii').decode('unicode_escape')
+        try:
+            unescaped_url = bytes(url, 'ascii').decode('unicode_escape')
+        except UnicodeDecodeError:
+            unescaped_url = url
 
-        scheme, host, path, query, frag = urllib.parse.urlsplit(unescaped_url)
+        unquoted_url = urllib.parse.unquote_plus(unescaped_url)
+        scheme, host, path, query, frag = urllib.parse.urlsplit(unquoted_url)
         rel_url = urllib.parse.urlunsplit(('', '', path, query, frag))
         self.cache.setdefault(remote_socket, {})\
                   .setdefault(host, {})\
