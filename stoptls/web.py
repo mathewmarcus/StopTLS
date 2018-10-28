@@ -23,7 +23,7 @@ HEADER_BLACKLIST = {
 
 SCHEME_DELIMITER = re.compile(':\/\/|:(?:\\\\x2[Ff]){2}|%3[Aa](?:%2[Ff]){2}')
 SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
-SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+()\\\\]+)'
+SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
                         .format(SCHEME_DELIMITER.pattern),
                         flags=re.IGNORECASE)
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
@@ -49,7 +49,9 @@ class Handler(object):
 
     async def strip(self, request):
         response = await self.proxy_request(request)
-        return await self.strip_response(response, request.remote)
+        stripped_response = await self.strip_response(response, request.remote)
+        await stripped_response.prepare(request)
+        return stripped_response
 
     async def proxy_request(self, request):
         # check if URL was previously stripped and cached
@@ -76,7 +78,7 @@ class Handler(object):
                                        request.query_string,
                                        request.url.fragment))
         method = request.method.lower()
-        data = request.content if request.body_exists else None
+        data = request.content if request.can_read_body else None
 
         #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies,
         # maybe by subclassing aiohttp.abc.AbstractCookieJar
@@ -84,8 +86,8 @@ class Handler(object):
                                           url,
                                           data=data,
                                           headers=headers,
-                                          max_redirects=100)
-                                          # allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
+                                          # max_redirects=100)
+                                          allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
     async def strip_response(self, response, remote_ip):
         # strip secure URLs from HTML and Javascript bodies
