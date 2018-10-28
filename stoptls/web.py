@@ -4,7 +4,7 @@ import bs4
 import urllib.parse
 import re
 
-from cache import InMemoryCache
+from stoptls.cache import InMemoryCache
 
 
 HEADER_BLACKLIST = {
@@ -76,12 +76,12 @@ class Handler(object):
         method = request.method.lower()
         data = request.content if request.body_exists else None
 
-        #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies
+        #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies,
+        # maybe by subclassing aiohttp.abc.AbstractCookieJar
         return await self.session.request(method,
                                           url,
                                           data=data,
                                           headers=headers,
-                                          cookies=request.cookies,
                                           max_redirects=100)
                                           # allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
@@ -177,7 +177,7 @@ class Handler(object):
                 yield '{}={}'.format(name, value)
 
 
-async def web_main():
+async def main():
     # HTTP is a special case because it uses aiohttp
     # rather than raw asyncio. As such, it differs in two ways
     #    1. It has a seperate, individual port/handler
@@ -192,19 +192,3 @@ async def web_main():
 
     async with server:
         await server.serve_forever()
-
-
-async def generic_tcp_main():
-    server = await asyncio.start_server(lambda x: 1, '127.0.0.1', 8081)
-
-    print("======= Serving generic TCP on 127.0.0.1:8081 ======")
-
-    async with server:
-        await server.serve_forever()
-
-
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    servers = asyncio.gather(web_main(), generic_tcp_main())
-    # loop.run_until_complete(asyncio.wait([asyncio.ensure_future(web_main()), asyncio.ensure_future(generic_tcp_main())], return_when=asyncio.FIRST_EXCEPTION))
-    loop.run_until_complete(servers)
