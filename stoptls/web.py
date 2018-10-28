@@ -120,6 +120,7 @@ class Handler(object):
             cookie_directives.pop('secure', None)
 
             # aiohttp.web.Response.set_cookie doesn't allow "comment" directive
+            # as a kwarg
             cookie_directives.pop('comment', None)
 
             stripped_directives = {}
@@ -130,6 +131,7 @@ class Handler(object):
             stripped_response.set_cookie(cookie_name,
                                          cookie_directives.value,
                                          **stripped_directives)
+
         return stripped_response
 
     def strip_html_body(self, body, remote_socket):

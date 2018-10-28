@@ -28,11 +28,14 @@ class InMemoryCache(Cache):
         self.cache = {}
 
     def add_url(self, remote_socket, url):
-        # TODO: handler cases where URL has escape characters
-        parsed_url = urllib.parse.urlsplit(url)
-        rel_url = ''.join(parsed_url[2:4])
+        # unescape URL
+        # In the future, potentially also remove %-encoded chars
+        unescaped_url = bytes(url, 'ascii').decode('unicode_escape')
+
+        scheme, host, path, query, frag = urllib.parse.urlsplit(unescaped_url)
+        rel_url = urllib.parse.urlunsplit(('', '', path, query, frag))
         self.cache.setdefault(remote_socket, {})\
-                  .setdefault(parsed_url[1], {})\
+                  .setdefault(host, {})\
                   .setdefault('rel_urls', set([]))\
                   .add(rel_url)
 
