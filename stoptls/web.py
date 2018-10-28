@@ -21,7 +21,10 @@ HEADER_BLACKLIST = {
     ]
 }
 
-SECURE_URL = re.compile('(https)(:(\/\/|\\\\x2[Ff]\\\\x2[Ff])[a-zA-z0-9.\/?\-#=&;%:~_$@+()\\\\]+)',
+SCHEME_DELIMITER = re.compile(':\/\/|:(?:\\\\x2[Ff]){2}|%3[Aa](?:%2[Ff]){2}')
+SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
+SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+()\\\\]+)'
+                        .format(SCHEME_DELIMITER.pattern),
                         flags=re.IGNORECASE)
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
@@ -45,14 +48,13 @@ class Handler(object):
         self.cache = InMemoryCache()
 
     async def strip(self, request):
-        request['remote_socket'] = '{}:{}'.format(*request.transport.get_extra_info('peername'))
         response = await self.proxy_request(request)
-        return await self.strip_response(response, request['remote_socket'])
+        return await self.strip_response(response, request.remote)
 
     async def proxy_request(self, request):
         # check if URL was previously stripped and cached
         scheme = 'https' \
-            if self.cache.has_url(request['remote_socket'],
+            if self.cache.has_url(request.remote,
                                   request.host,
                                   request.rel_url.human_repr()) \
             else 'http'
@@ -62,7 +64,7 @@ class Handler(object):
 
         # Kill sesssions
         cookies = self.filter_incoming_cookies(request.cookies,
-                                               request['remote_socket'],
+                                               request.remote,
                                                request.host)
         headers['Cookie'] = '; '.join(cookies)
 
@@ -85,12 +87,12 @@ class Handler(object):
                                           max_redirects=100)
                                           # allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
-    async def strip_response(self, response, remote_socket):
+    async def strip_response(self, response, remote_ip):
         # strip secure URLs from HTML and Javascript bodies
         if response.content_type == 'text/html':
-            body = self.strip_html_body(await response.text(), remote_socket)
+            body = self.strip_html_body(await response.text(), remote_ip)
         elif response.content_type == 'application/javascript' or response.content_type == 'text/css':
-            body = self.strip_text(await response.text(), remote_socket)
+            body = self.strip_text(await response.text(), remote_ip)
         else:
             body = await response.read()
             # response.release()
@@ -101,7 +103,7 @@ class Handler(object):
         try:
             location = headers['Location']
             headers['Location'] = location.replace('https://', 'http://')
-            self.cache.add_url(remote_socket, location)
+            self.cache.add_url(remote_ip, location)
         except KeyError:
             pass
 
@@ -112,7 +114,7 @@ class Handler(object):
         # remove secure flag from cookies
         for cookie_name, cookie_directives in response.cookies.items():
             # cache newly-set cookies
-            self.cache.add_cookie(remote_socket,
+            self.cache.add_cookie(remote_ip,
                                   response.url.host,
                                   cookie_name)
 
@@ -131,10 +133,9 @@ class Handler(object):
             stripped_response.set_cookie(cookie_name,
                                          cookie_directives.value,
                                          **stripped_directives)
-
         return stripped_response
 
-    def strip_html_body(self, body, remote_socket):
+    def strip_html_body(self, body, remote_ip):
         soup = bs4.BeautifulSoup(body, 'html.parser')
         secure_url_attrs = []
 
@@ -146,7 +147,7 @@ class Handler(object):
 
                 if SECURE_URL.fullmatch(attr_value):
                     secure_url_attrs.append(attr_name)
-                    self.cache.add_url(remote_socket, attr_value)
+                    self.cache.add_url(remote_ip, attr_value)
                     found = True
 
             return found
@@ -160,20 +161,21 @@ class Handler(object):
         # strip secure URLs from <style> and <script> blocks
         css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
         for tag in css_or_script_tags:
-            tag.string = self.strip_text(tag.string, remote_socket)
+            if tag.string:
+                tag.string = self.strip_text(tag.string, remote_ip)
 
         return str(soup)
 
-    def strip_text(self, body, remote_socket):
+    def strip_text(self, body, remote_ip):
         def generate_unsecure_replacement(secure_url):
-            self.cache.add_url(remote_socket, secure_url.group(0))
-            return 'http' + secure_url.group(2)
+            self.cache.add_url(remote_ip, secure_url.group(0))
+            return 'http' + secure_url.group(1)
 
         return SECURE_URL.sub(generate_unsecure_replacement, body)
 
-    def filter_incoming_cookies(self, cookies, remote_socket, host):
+    def filter_incoming_cookies(self, cookies, remote_ip, host):
         for name, value in cookies.items():
-            if self.cache.has_cookie(remote_socket,
+            if self.cache.has_cookie(remote_ip,
                                      host,
                                      name):
                 yield '{}={}'.format(name, value)
