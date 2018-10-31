@@ -92,7 +92,12 @@ class Handler(object):
     async def strip_response(self, response, remote_ip):
         # strip secure URLs from HTML and Javascript bodies
         if response.content_type == 'text/html':
-            body = self.strip_html_body(await response.text(), remote_ip)
+            try:
+                body = await response.text()
+            except UnicodeDecodeError:
+                raw_body = await response.read()
+                body = raw_body.decode('utf-8')
+            body = self.strip_html_body(body, remote_ip)
         elif response.content_type == 'application/javascript' or response.content_type == 'text/css':
             body = self.strip_text(await response.text(), remote_ip)
         else:
