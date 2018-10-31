@@ -143,22 +143,27 @@ class Handler(object):
 
         def has_secure_url_attr(tag):
             found = False
+            url_attrs = []
             for attr_name, attr_value in tag.attrs.items():
                 if isinstance(attr_value, list):
                     attr_value = ' '.join(attr_value)
 
                 if SECURE_URL.fullmatch(attr_value):
-                    secure_url_attrs.append(attr_name)
+                    url_attrs.append(attr_name)
                     self.cache.add_url(remote_ip, attr_value)
                     found = True
+
+            if url_attrs:
+                secure_url_attrs.append(url_attrs)
 
             return found
 
         secure_tags = soup.find_all(has_secure_url_attr)
 
-        for index, tag in enumerate(secure_tags):
-            secure_url = tag[secure_url_attrs[index]]
-            tag[secure_url_attrs[index]] = secure_url.replace('https://', 'http://')
+        for i, tag in enumerate(secure_tags):
+            for attr in secure_url_attrs[i]:
+                secure_url = tag[attr]
+                tag[attr] = secure_url.replace('https://', 'http://')
 
         # strip secure URLs from <style> and <script> blocks
         css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
