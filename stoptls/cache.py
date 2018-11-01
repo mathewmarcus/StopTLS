@@ -45,7 +45,7 @@ class InMemoryCache(Cache):
 
     def has_url(self, remote_socket, host, rel_url):
         try:
-            return rel_url in self.cache[remote_socket][host]['rel_urls']
+            return urllib.parse.unquote_plus(rel_url) in self.cache[remote_socket][host]['rel_urls']
         except KeyError:
             return False
         else:
