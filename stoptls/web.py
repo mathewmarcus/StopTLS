@@ -26,7 +26,7 @@ SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
 SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
                         .format(SCHEME_DELIMITER.pattern),
                         flags=re.IGNORECASE)
-RELATIVE_URL = re.compile('(^/[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)')
+RELATIVE_URL = re.compile('(^\/(?!\/)[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)')
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
 CSS_OR_SCRIPT = re.compile('^script$|^style$')
@@ -48,7 +48,9 @@ class Handler(object):
 
     async def strip(self, request):
         response = await self.proxy_request(request)
-        stripped_response = await self.strip_response(response, request.remote)
+        stripped_response = await self.strip_response(response,
+                                                      request.remote,
+                                                      request.host)
         await stripped_response.prepare(request)
         return stripped_response
 
@@ -87,7 +89,7 @@ class Handler(object):
                                           # max_redirects=100)
                                           allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
-    async def strip_response(self, response, remote_ip):
+    async def strip_response(self, response, remote_ip, host):
         # strip secure URLs from HTML and Javascript bodies
         if response.content_type == 'text/html':
             try:
@@ -95,9 +97,9 @@ class Handler(object):
             except UnicodeDecodeError:
                 raw_body = await response.read()
                 body = raw_body.decode('utf-8')
-            body = self.strip_html_body(body, remote_ip)
+            body = self.strip_html_body(body, remote_ip, host)
         elif response.content_type == 'application/javascript' or response.content_type == 'text/css':
-            body = self.strip_text(await response.text(), remote_ip)
+            body = self.strip_text(await response.text(), remote_ip, host)
         else:
             body = await response.read()
             # response.release()
@@ -124,7 +126,7 @@ class Handler(object):
 
         return stripped_response
 
-    def strip_html_body(self, body, remote_ip):
+    def strip_html_body(self, body, remote_ip, host):
         soup = bs4.BeautifulSoup(body, 'html.parser')
         secure_url_attrs = []
 
@@ -139,6 +141,10 @@ class Handler(object):
                     url_attrs.append(attr_name)
                     self.cache.add_url(remote_ip, attr_value)
                     found = True
+                elif RELATIVE_URL.fullmatch(attr_value):
+                    url_attrs.append(attr_name)
+                    self.cache.add_url(remote_ip, attr_value, host=host)
+                    found = True
 
             if url_attrs:
                 secure_url_attrs.append(url_attrs)
@@ -150,22 +156,33 @@ class Handler(object):
         for i, tag in enumerate(secure_tags):
             for attr in secure_url_attrs[i]:
                 secure_url = tag[attr]
-                tag[attr] = secure_url.replace('https://', 'http://')
+                if secure_url.startswith('/'):
+                    tag[attr] = 'http://{}{}'.format(host, secure_url)
+                    print(tag[attr])
+                else:
+                    tag[attr] = secure_url.replace('https://', 'http://')
 
         # strip secure URLs from <style> and <script> blocks
         css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
         for tag in css_or_script_tags:
             if tag.string:
-                tag.string = self.strip_text(tag.string, remote_ip)
+                tag.string = self.strip_text(tag.string, remote_ip, host)
 
         return str(soup)
 
-    def strip_text(self, body, remote_ip):
+    def strip_text(self, body, remote_ip, host):
         def generate_unsecure_replacement(secure_url):
             self.cache.add_url(remote_ip, secure_url.group(0))
             return 'http' + secure_url.group(1)
 
-        return SECURE_URL.sub(generate_unsecure_replacement, body)
+        def relative2absolute_url(relative_url):
+            self.cache.add_url(remote_ip, relative_url.group(0), host)
+            return 'http://{}{}'.format(host, relative_url)
+
+        canonicalized_text = RELATIVE_URL.sub(relative2absolute_url,
+                                              body)
+        return SECURE_URL.sub(generate_unsecure_replacement,
+                              canonicalized_text)
 
     def strip_cookies(self, cookies, remote_ip, host):
         for cookie_name, cookie_directives in cookies.items():

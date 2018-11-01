@@ -27,16 +27,19 @@ class InMemoryCache(Cache):
     def __init__(self):
         self.cache = {}
 
-    def add_url(self, remote_socket, url):
+    def add_url(self, remote_socket, url, host=None):
         # unescape URL
-        # In the future, potentially also remove %-encoded chars
         try:
             unescaped_url = bytes(url, 'ascii').decode('unicode_escape')
         except UnicodeDecodeError:
             unescaped_url = url
 
         unquoted_url = urllib.parse.unquote_plus(unescaped_url)
-        scheme, host, path, query, frag = urllib.parse.urlsplit(unquoted_url)
+        scheme, netloc, path, query, frag = urllib.parse.urlsplit(unquoted_url)
+
+        if netloc or not host:
+            host = netloc
+
         rel_url = urllib.parse.urlunsplit(('', '', path, query, frag))
         self.cache.setdefault(remote_socket, {})\
                   .setdefault(host, {})\
