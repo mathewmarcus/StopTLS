@@ -26,11 +26,10 @@ SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
 SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
                         .format(SCHEME_DELIMITER.pattern),
                         flags=re.IGNORECASE)
+RELATIVE_URL = re.compile('(^/[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)')
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
 CSS_OR_SCRIPT = re.compile('^script$|^style$')
-
-url_tracker = {}
 
 
 def strip_headers(headers, type_):
@@ -69,7 +68,6 @@ class Handler(object):
                                                request.remote,
                                                request.host)
         headers['Cookie'] = '; '.join(cookies)
-
         # TODO: possibly also remove certain types of auth (e.g. Authentication: Bearer)
 
         url = urllib.parse.urlunsplit((scheme,
@@ -119,27 +117,11 @@ class Handler(object):
                                                  headers=headers)
 
         # remove secure flag from cookies
-        for cookie_name, cookie_directives in response.cookies.items():
-            # cache newly-set cookies
-            self.cache.add_cookie(remote_ip,
-                                  response.url.host,
-                                  cookie_name)
+        for name, value, directives in self.strip_cookies(response.cookies,
+                                                          remote_ip,
+                                                          response.url.host):
+            stripped_response.set_cookie(name, value, **directives)
 
-            # remove "secure" directive
-            cookie_directives.pop('secure', None)
-
-            # aiohttp.web.Response.set_cookie doesn't allow "comment" directive
-            # as a kwarg
-            cookie_directives.pop('comment', None)
-
-            stripped_directives = {}
-            for directive_name, directive_value in cookie_directives.items():
-                if directive_value and cookie_directives.isReservedKey(directive_name):
-                    stripped_directives[directive_name.replace('-', '_')] = directive_value
-
-            stripped_response.set_cookie(cookie_name,
-                                         cookie_directives.value,
-                                         **stripped_directives)
         return stripped_response
 
     def strip_html_body(self, body, remote_ip):
@@ -184,6 +166,27 @@ class Handler(object):
             return 'http' + secure_url.group(1)
 
         return SECURE_URL.sub(generate_unsecure_replacement, body)
+
+    def strip_cookies(self, cookies, remote_ip, host):
+        for cookie_name, cookie_directives in cookies.items():
+            # cache newly-set cookies
+            self.cache.add_cookie(remote_ip,
+                                  host,
+                                  cookie_name)
+
+            # remove "secure" directive
+            cookie_directives.pop('secure', None)
+
+            # aiohttp.web.Response.set_cookie doesn't allow "comment" directive
+            # as a kwarg
+            cookie_directives.pop('comment', None)
+
+            stripped_directives = {}
+            for directive_name, directive_value in cookie_directives.items():
+                if directive_value and cookie_directives.isReservedKey(directive_name):
+                    stripped_directives[directive_name.replace('-', '_')] = directive_value
+
+            yield cookie_name, cookie_directives.value, stripped_directives
 
     def filter_incoming_cookies(self, cookies, remote_ip, host):
         for name, value in cookies.items():
