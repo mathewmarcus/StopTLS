@@ -71,6 +71,12 @@ class Handler(object):
 
         orig_headers = dict(request.headers)
         headers = strip_headers(orig_headers, 'request')
+        try:
+            parsed_origin = urllib.parse.urlsplit(headers['Origin'])
+            if self.cache.has_domain(request.remote_ip, parsed_origin.netloc):
+                headers['Origin'] = parsed_origin._replace(scheme='https').geturl()
+        except KeyError:
+            pass
 
         # Kill sesssions
         cookies = self.filter_incoming_cookies(request.cookies,

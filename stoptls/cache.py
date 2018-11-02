@@ -68,6 +68,11 @@ class InMemoryCache(Cache):
         else:
             return False
 
+    def has_domain(self, remote_socket, host):
+        try:
+            return self.cache[remote_socket][host]
+        except KeyError:
+            return False
 
 class RedisCache(Cache):
     def __init__(self):
