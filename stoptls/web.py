@@ -26,6 +26,9 @@ SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
 SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
                         .format(SCHEME_DELIMITER.pattern),
                         flags=re.IGNORECASE)
+UNSECURE_URL = re.compile('(?:http)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
+                          .format(SCHEME_DELIMITER.pattern),
+                          flags=re.IGNORECASE)
 RELATIVE_URL = re.compile('(^\/(?!\/)[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)')
 COOKIE_SECURE_FLAG = re.compile('Secure;?',
                                 flags=re.IGNORECASE)
@@ -56,11 +59,15 @@ class Handler(object):
 
     async def proxy_request(self, request):
         # check if URL was previously stripped and cached
-        scheme = 'https' \
-            if self.cache.has_url(request.remote,
-                                  request.host,
-                                  request.rel_url.human_repr()) \
-            else 'http'
+        if self.cache.has_url(request.remote,
+                              request.host,
+                              request.rel_url.human_repr()):
+            scheme = 'https'
+        else:
+            scheme = 'http'
+
+        query_params = self.unstrip_query_params(request.url.query,
+                                                 request.remote)
 
         orig_headers = dict(request.headers)
         headers = strip_headers(orig_headers, 'request')
@@ -75,7 +82,7 @@ class Handler(object):
         url = urllib.parse.urlunsplit((scheme,
                                        request.host,
                                        request.path,
-                                       request.query_string,
+                                       '',
                                        request.url.fragment))
         method = request.method.lower()
         data = request.content if request.can_read_body else None
@@ -86,6 +93,7 @@ class Handler(object):
                                           url,
                                           data=data,
                                           headers=headers,
+                                          params=query_params,
                                           # max_redirects=100)
                                           allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
@@ -126,6 +134,23 @@ class Handler(object):
 
         return stripped_response
 
+    def unstrip_query_params(self, query_params, remote_ip):
+        unstripped_params = query_params.copy()
+        for key, value in query_params.items():
+            # unstrip URLs in path params
+            if UNSECURE_URL.fullmatch(value):
+                parsed_url = urllib.parse.urlsplit(value)
+                if self.cache.has_url(remote_ip,
+                                      parsed_url.netloc,
+                                      urllib.parse.urlunsplit(('',
+                                                               '',
+                                                               parsed_url.path,
+                                                               parsed_url.query,
+                                                               parsed_url.fragment))):
+                    unstripped_params.update({key: parsed_url._replace(scheme='https').geturl()})
+
+        return unstripped_params
+
     def strip_html_body(self, body, remote_ip, host):
         soup = bs4.BeautifulSoup(body, 'html.parser')
         secure_url_attrs = []
@@ -158,9 +183,9 @@ class Handler(object):
                 secure_url = tag[attr]
                 if secure_url.startswith('/'):
                     tag[attr] = 'http://{}{}'.format(host, secure_url)
-                    print(tag[attr])
                 else:
-                    tag[attr] = secure_url.replace('https://', 'http://')
+                    parsed_url = urllib.parse.urlsplit(secure_url)
+                    tag[attr] = urllib.parse.urlunsplit(parsed_url._replace(scheme='http'))
 
         # strip secure URLs from <style> and <script> blocks
         css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
