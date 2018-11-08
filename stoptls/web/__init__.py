@@ -2,8 +2,8 @@ import asyncio
 import aiohttp.web
 import bs4
 import urllib.parse
-import re
 
+from stoptls.web import regex
 from stoptls.cache import InMemoryCache
 
 
@@ -21,19 +21,6 @@ HEADER_BLACKLIST = {
     ]
 }
 
-SCHEME_DELIMITER = re.compile(':\/\/|:(?:\\\\x2[Ff]){2}|%3[Aa](?:%2[Ff]){2}')
-SCHEME = re.compile('(?:https)({})'.format(SCHEME_DELIMITER.pattern))
-SECURE_URL = re.compile('(?:https)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
-                        .format(SCHEME_DELIMITER.pattern),
-                        flags=re.IGNORECASE)
-UNSECURE_URL = re.compile('(?:http)((?:{})[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)'
-                          .format(SCHEME_DELIMITER.pattern),
-                          flags=re.IGNORECASE)
-RELATIVE_URL = re.compile('(^\/(?!\/)[a-zA-z0-9.\/?\-#=&;%:~_$@+,\\\\]+)')
-COOKIE_SECURE_FLAG = re.compile('Secure;?',
-                                flags=re.IGNORECASE)
-CSS_OR_SCRIPT = re.compile('^script$|^style$')
-
 
 def strip_headers(headers, type_):
     for header in HEADER_BLACKLIST[type_]:
@@ -42,7 +29,7 @@ def strip_headers(headers, type_):
     return headers
 
 
-class Handler(object):
+class StopTLSProxy(object):
     def __init__(self):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
         self.session = aiohttp.ClientSession(connector=self._tcp_connector,
@@ -144,7 +131,7 @@ class Handler(object):
         unstripped_params = query_params.copy()
         for key, value in query_params.items():
             # unstrip URLs in path params
-            if UNSECURE_URL.fullmatch(value):
+            if regex.UNSECURE_URL.fullmatch(value):
                 parsed_url = urllib.parse.urlsplit(value)
                 if self.cache.has_url(remote_ip,
                                       parsed_url.netloc,
@@ -168,11 +155,11 @@ class Handler(object):
                 if isinstance(attr_value, list):
                     attr_value = ' '.join(attr_value)
 
-                if SECURE_URL.fullmatch(attr_value):
+                if regex.SECURE_URL.fullmatch(attr_value):
                     url_attrs.append(attr_name)
                     self.cache.add_url(remote_ip, attr_value)
                     found = True
-                elif RELATIVE_URL.fullmatch(attr_value):
+                elif regex.RELATIVE_URL.fullmatch(attr_value):
                     url_attrs.append(attr_name)
                     self.cache.add_url(remote_ip, attr_value, host=host)
                     found = True
@@ -194,7 +181,7 @@ class Handler(object):
                     tag[attr] = urllib.parse.urlunsplit(parsed_url._replace(scheme='http'))
 
         # strip secure URLs from <style> and <script> blocks
-        css_or_script_tags = soup.find_all(CSS_OR_SCRIPT)
+        css_or_script_tags = soup.find_all(regex.CSS_OR_SCRIPT)
         for tag in css_or_script_tags:
             if tag.string:
                 tag.string = self.strip_text(tag.string, remote_ip, host)
@@ -210,10 +197,10 @@ class Handler(object):
             self.cache.add_url(remote_ip, relative_url.group(0), host)
             return 'http://{}{}'.format(host, relative_url)
 
-        canonicalized_text = RELATIVE_URL.sub(relative2absolute_url,
-                                              body)
-        return SECURE_URL.sub(generate_unsecure_replacement,
-                              canonicalized_text)
+        canonicalized_text = regex.RELATIVE_URL.sub(relative2absolute_url,
+                                                    body)
+        return regex.SECURE_URL.sub(generate_unsecure_replacement,
+                                    canonicalized_text)
 
     def strip_cookies(self, cookies, remote_ip, host):
         for cookie_name, cookie_directives in cookies.items():
@@ -251,10 +238,10 @@ async def main():
     #    2. It uses loop.create_server instead of start_server,
     #       in order to adhere to the aiohttp documentation
 
-    handler = Handler()
-    server = await asyncio.get_running_loop().create_server(aiohttp.web.Server(handler.strip),
-                                                            None,
-                                                            8080)
+    server = await asyncio\
+        .get_running_loop()\
+        .create_server(aiohttp.web.Server(StopTLSProxy().strip),
+                       port=8080)
     print("======= Serving HTTP on 127.0.0.1:8080 ======")
 
     async with server:
