@@ -74,6 +74,7 @@ class InMemoryCache(Cache):
         except KeyError:
             return False
 
+
 class RedisCache(Cache):
     def __init__(self):
         raise NotImplementedError
