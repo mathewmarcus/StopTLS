@@ -18,14 +18,17 @@ class RequestProxy(object):
 
     async def proxy_request(self):
         # check if URL was previously stripped and cached
-        if self.cache.has_url(self.client_ip,
-                              self.host,
+        if self.cache.has_url(self.request.remote,
+                              self.request.host,
                               self.request.rel_url.human_repr()):
             scheme = 'https'
         else:
             scheme = 'http'
 
-        headers = self.filter_and_strip_headers(dict(self.request.headers))
+        query_params = self.unstrip_query_params(self.request.url.query)
+
+        orig_headers = dict(self.request.headers)
+        headers = self.filter_and_strip_headers(orig_headers)
 
         # Kill sesssions
         cookies = self.filter_cookies(self.request.cookies)
@@ -33,19 +36,22 @@ class RequestProxy(object):
         # TODO: possibly also remove certain types of auth (e.g. Authentication: Bearer)
 
         url = urllib.parse.urlunsplit((scheme,
-                                       self.host,
+                                       self.request.host,
                                        self.request.path,
                                        '',
                                        self.request.url.fragment))
+        method = self.request.method.lower()
+        data = self.request.content if self.request.can_read_body else None
 
         #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies,
         # maybe by subclassing aiohttp.abc.AbstractCookieJar
-        return await self.session.request(self.request.method.lower(),
+        return await self.session.request(method,
                                           url,
-                                          data=self.request.content if self.request.can_read_body else None,
+                                          data=data,
                                           headers=headers,
-                                          params=self.unstrip_query_params(self.request.url.query),
-                                          allow_redirects=False)
+                                          params=query_params,
+                                          # max_redirects=100)
+                                          allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
     def filter_and_strip_headers(self, headers):
         for header in type(self).HEADER_BLACKLIST:
@@ -53,12 +59,12 @@ class RequestProxy(object):
 
         try:
             parsed_origin = urllib.parse.urlsplit(headers['Origin'])
-            if self.cache.has_domain(self.request.remote_ip, parsed_origin.netloc):
+            if self.cache.has_domain(self.request.remote, parsed_origin.netloc):
                 headers['Origin'] = parsed_origin._replace(scheme='https').geturl()
         except KeyError:
             pass
 
-            return headers
+        return headers
 
     def unstrip_query_params(self, query_params):
         unstripped_params = query_params.copy()
@@ -75,6 +81,7 @@ class RequestProxy(object):
                                                                parsed_url.query,
                                                                parsed_url.fragment))):
                     unstripped_params.update({key: parsed_url._replace(scheme='https').geturl()})
+        return unstripped_params
 
     def filter_cookies(self, cookies):
         for name, value in cookies.items():
