@@ -6,21 +6,6 @@ from stoptls.web.response import ResponseProxy
 from stoptls.cache import InMemoryCache
 
 
-HEADER_BLACKLIST = {
-    'request': [
-        'Upgrade-Insecure-Requests',
-        'Host'
-    ],
-    'response': [
-        'Strict-Transport-Security',
-        'Content-Length',
-        'Content-Encoding',
-        'Transfer-Encoding',
-        'Set-Cookie'
-    ]
-}
-
-
 class StopTLSProxy(object):
     def __init__(self):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
