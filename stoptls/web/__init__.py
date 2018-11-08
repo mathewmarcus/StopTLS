@@ -4,6 +4,7 @@ import bs4
 import urllib.parse
 
 from stoptls.web import regex
+from stoptls.web.request import RequestProxy
 from stoptls.cache import InMemoryCache
 
 
@@ -37,58 +38,14 @@ class StopTLSProxy(object):
         self.cache = InMemoryCache()
 
     async def strip(self, request):
-        response = await self.proxy_request(request)
+        request['cache'] = self.cache
+        request['session'] = self.session
+        response = await RequestProxy(request).proxy_request()
         stripped_response = await self.strip_response(response,
                                                       request.remote,
                                                       request.host)
         await stripped_response.prepare(request)
         return stripped_response
-
-    async def proxy_request(self, request):
-        # check if URL was previously stripped and cached
-        if self.cache.has_url(request.remote,
-                              request.host,
-                              request.rel_url.human_repr()):
-            scheme = 'https'
-        else:
-            scheme = 'http'
-
-        query_params = self.unstrip_query_params(request.url.query,
-                                                 request.remote)
-
-        orig_headers = dict(request.headers)
-        headers = strip_headers(orig_headers, 'request')
-        try:
-            parsed_origin = urllib.parse.urlsplit(headers['Origin'])
-            if self.cache.has_domain(request.remote_ip, parsed_origin.netloc):
-                headers['Origin'] = parsed_origin._replace(scheme='https').geturl()
-        except KeyError:
-            pass
-
-        # Kill sesssions
-        cookies = self.filter_incoming_cookies(request.cookies,
-                                               request.remote,
-                                               request.host)
-        headers['Cookie'] = '; '.join(cookies)
-        # TODO: possibly also remove certain types of auth (e.g. Authentication: Bearer)
-
-        url = urllib.parse.urlunsplit((scheme,
-                                       request.host,
-                                       request.path,
-                                       '',
-                                       request.url.fragment))
-        method = request.method.lower()
-        data = request.content if request.can_read_body else None
-
-        #TODO: possibly use built-in aiohttp.ClientSession cache to store cookies,
-        # maybe by subclassing aiohttp.abc.AbstractCookieJar
-        return await self.session.request(method,
-                                          url,
-                                          data=data,
-                                          headers=headers,
-                                          params=query_params,
-                                          # max_redirects=100)
-                                          allow_redirects=False)  # potentially set this to False to prevent auto-redirection)
 
     async def strip_response(self, response, remote_ip, host):
         # strip secure URLs from HTML and Javascript bodies
@@ -126,23 +83,6 @@ class StopTLSProxy(object):
             stripped_response.set_cookie(name, value, **directives)
 
         return stripped_response
-
-    def unstrip_query_params(self, query_params, remote_ip):
-        unstripped_params = query_params.copy()
-        for key, value in query_params.items():
-            # unstrip URLs in path params
-            if regex.UNSECURE_URL.fullmatch(value):
-                parsed_url = urllib.parse.urlsplit(value)
-                if self.cache.has_url(remote_ip,
-                                      parsed_url.netloc,
-                                      urllib.parse.urlunsplit(('',
-                                                               '',
-                                                               parsed_url.path,
-                                                               parsed_url.query,
-                                                               parsed_url.fragment))):
-                    unstripped_params.update({key: parsed_url._replace(scheme='https').geturl()})
-
-        return unstripped_params
 
     def strip_html_body(self, body, remote_ip, host):
         soup = bs4.BeautifulSoup(body, 'html.parser')
@@ -222,13 +162,6 @@ class StopTLSProxy(object):
                     stripped_directives[directive_name.replace('-', '_')] = directive_value
 
             yield cookie_name, cookie_directives.value, stripped_directives
-
-    def filter_incoming_cookies(self, cookies, remote_ip, host):
-        for name, value in cookies.items():
-            if self.cache.has_cookie(remote_ip,
-                                     host,
-                                     name):
-                yield '{}={}'.format(name, value)
 
 
 async def main():
