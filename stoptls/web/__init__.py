@@ -2,6 +2,7 @@ import asyncio
 import aiohttp.web
 
 from stoptls.web.request import RequestProxy
+from stoptls.web.response import ResponseProxy
 from stoptls.cache import InMemoryCache
 
 
@@ -28,12 +29,12 @@ class StopTLSProxy(object):
         self.cache = InMemoryCache()
 
     async def strip(self, request):
-        request['cache'] = self.cache
+        request['cache'] = self.cache.get_client_cache(request.remote)
         request['session'] = self.session
         response = await RequestProxy(request).proxy_request()
-        stripped_response = await self.strip_response(response,
-                                                      request.remote,
-                                                      request.host)
+        stripped_response = await ResponseProxy(response,
+                                                request.host,
+                                                request['cache']).strip_response()
         await stripped_response.prepare(request)
         return stripped_response
 
