@@ -1,9 +1,6 @@
 import asyncio
 import aiohttp.web
-import bs4
-import urllib.parse
 
-from stoptls.web import regex
 from stoptls.web.request import RequestProxy
 from stoptls.cache import InMemoryCache
 
@@ -23,13 +20,6 @@ HEADER_BLACKLIST = {
 }
 
 
-def strip_headers(headers, type_):
-    for header in HEADER_BLACKLIST[type_]:
-        headers.pop(header, None)
-
-    return headers
-
-
 class StopTLSProxy(object):
     def __init__(self):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
@@ -46,122 +36,6 @@ class StopTLSProxy(object):
                                                       request.host)
         await stripped_response.prepare(request)
         return stripped_response
-
-    async def strip_response(self, response, remote_ip, host):
-        # strip secure URLs from HTML and Javascript bodies
-        if response.content_type == 'text/html':
-            try:
-                body = await response.text()
-            except UnicodeDecodeError:
-                raw_body = await response.read()
-                body = raw_body.decode('utf-8')
-            body = self.strip_html_body(body, remote_ip, host)
-        elif response.content_type == 'application/javascript' or response.content_type == 'text/css':
-            body = self.strip_text(await response.text(), remote_ip, host)
-        else:
-            body = await response.read()
-            # response.release()
-
-        headers = strip_headers(dict(response.headers), 'response')
-
-        # strip secure URL from location header
-        try:
-            location = headers['Location']
-            headers['Location'] = location.replace('https://', 'http://')
-            self.cache.add_url(remote_ip, location)
-        except KeyError:
-            pass
-
-        stripped_response = aiohttp.web.Response(body=body,
-                                                 status=response.status,
-                                                 headers=headers)
-
-        # remove secure flag from cookies
-        for name, value, directives in self.strip_cookies(response.cookies,
-                                                          remote_ip,
-                                                          response.url.host):
-            stripped_response.set_cookie(name, value, **directives)
-
-        return stripped_response
-
-    def strip_html_body(self, body, remote_ip, host):
-        soup = bs4.BeautifulSoup(body, 'html.parser')
-        secure_url_attrs = []
-
-        def has_secure_url_attr(tag):
-            found = False
-            url_attrs = []
-            for attr_name, attr_value in tag.attrs.items():
-                if isinstance(attr_value, list):
-                    attr_value = ' '.join(attr_value)
-
-                if regex.SECURE_URL.fullmatch(attr_value):
-                    url_attrs.append(attr_name)
-                    self.cache.add_url(remote_ip, attr_value)
-                    found = True
-                elif regex.RELATIVE_URL.fullmatch(attr_value):
-                    url_attrs.append(attr_name)
-                    self.cache.add_url(remote_ip, attr_value, host=host)
-                    found = True
-
-            if url_attrs:
-                secure_url_attrs.append(url_attrs)
-
-            return found
-
-        secure_tags = soup.find_all(has_secure_url_attr)
-
-        for i, tag in enumerate(secure_tags):
-            for attr in secure_url_attrs[i]:
-                secure_url = tag[attr]
-                if secure_url.startswith('/'):
-                    tag[attr] = 'http://{}{}'.format(host, secure_url)
-                else:
-                    parsed_url = urllib.parse.urlsplit(secure_url)
-                    tag[attr] = urllib.parse.urlunsplit(parsed_url._replace(scheme='http'))
-
-        # strip secure URLs from <style> and <script> blocks
-        css_or_script_tags = soup.find_all(regex.CSS_OR_SCRIPT)
-        for tag in css_or_script_tags:
-            if tag.string:
-                tag.string = self.strip_text(tag.string, remote_ip, host)
-
-        return str(soup)
-
-    def strip_text(self, body, remote_ip, host):
-        def generate_unsecure_replacement(secure_url):
-            self.cache.add_url(remote_ip, secure_url.group(0))
-            return 'http' + secure_url.group(1)
-
-        def relative2absolute_url(relative_url):
-            self.cache.add_url(remote_ip, relative_url.group(0), host)
-            return 'http://{}{}'.format(host, relative_url)
-
-        canonicalized_text = regex.RELATIVE_URL.sub(relative2absolute_url,
-                                                    body)
-        return regex.SECURE_URL.sub(generate_unsecure_replacement,
-                                    canonicalized_text)
-
-    def strip_cookies(self, cookies, remote_ip, host):
-        for cookie_name, cookie_directives in cookies.items():
-            # cache newly-set cookies
-            self.cache.add_cookie(remote_ip,
-                                  host,
-                                  cookie_name)
-
-            # remove "secure" directive
-            cookie_directives.pop('secure', None)
-
-            # aiohttp.web.Response.set_cookie doesn't allow "comment" directive
-            # as a kwarg
-            cookie_directives.pop('comment', None)
-
-            stripped_directives = {}
-            for directive_name, directive_value in cookie_directives.items():
-                if directive_value and cookie_directives.isReservedKey(directive_name):
-                    stripped_directives[directive_name.replace('-', '_')] = directive_value
-
-            yield cookie_name, cookie_directives.value, stripped_directives
 
 
 async def main():
