@@ -5,11 +5,12 @@ from abc import ABC, abstractmethod
 class TCPProxy(ABC):
     SO_ORIGINAL_DST = 80
 
-    def __init__(self):
+    def __init__(self, dst_port):
+        self.dst_port = dst_port
         super().__init__()
 
     @abstractmethod
-    async def strip(self, reader, writer):
+    async def strip(self, client_reader, client_writer):
         raise NotImplementedError
 
     def get_orig_ip(self, reader):
