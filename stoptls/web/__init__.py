@@ -6,7 +6,7 @@ from stoptls.web.response import ResponseProxy
 from stoptls.cache import InMemoryCache
 
 
-class StopTLSProxy(object):
+class WebProxy(object):
     def __init__(self):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
         self.session = aiohttp.ClientSession(connector=self._tcp_connector,
@@ -33,9 +33,9 @@ async def main():
 
     server = await asyncio\
         .get_running_loop()\
-        .create_server(aiohttp.web.Server(StopTLSProxy().strip),
+        .create_server(aiohttp.web.Server(WebProxy().strip),
                        port=8080)
-    print("======= Serving HTTP on 127.0.0.1:8080 ======")
+    print("======= Serving HTTP on 8080 ======")
 
     async with server:
         await server.serve_forever()
