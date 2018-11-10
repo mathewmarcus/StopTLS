@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import socket
 import ssl
 
 from stoptls.tcp.base import TCPProxy
@@ -13,8 +14,7 @@ class IMAPProxy(TCPProxy):
         super().__init__(dst_port=143)
 
     async def strip(self, client_reader, client_writer):
-        # dst_address = self.get_orig_ip(client_reader)
-        dst_address = '127.0.0.1'
+        dst_address = self.get_orig_ip(client_reader)
         logging.debug('Original destination: {}'.format(dst_address))
         server_reader, server_writer = await asyncio.open_connection(dst_address,
                                                                      self.dst_port)
@@ -39,12 +39,18 @@ class IMAPProxy(TCPProxy):
                 sc.check_hostname = False
                 sc.verify_mode = ssl.CERT_NONE
 
-                server_reader, server_writer = await asyncio.open_connection(sock=server_writer.get_extra_info('socket'), ssl=sc, server_hostname='localhost')
+                nameinfo = await asyncio.get_running_loop()\
+                                        .getnameinfo((dst_address,
+                                                      self.dst_port),
+                                                     socket.NI_NAMEREQD)
+                server_reader, server_writer = await asyncio.open_connection(sock=server_writer.get_extra_info('socket'),
+                                                                             ssl=sc,
+                                                                             server_hostname=nameinfo[0])
                 logging.debug('Sucessfully upgraded to TLS!')
             else:
                 logging.debug('Failed to upgraded to TLS')
 
-        client_writer.write(banner.encode('ascii'))
+        client_writer.write(banner.encode('ascii') + '\n')
         logging.debug('Writing banner to client...')
         await client_writer.drain()
 
