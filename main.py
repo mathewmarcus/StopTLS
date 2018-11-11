@@ -12,5 +12,5 @@ parser = argparse.ArgumentParser(description='MitM proxy which performs opportun
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     asyncio.ensure_future(web_main())
-    asyncio.ensure_future(functools.partial(TCPProxy.main, 14314))
+    asyncio.ensure_future(TCPProxy.main(14314))
     loop.run_forever()

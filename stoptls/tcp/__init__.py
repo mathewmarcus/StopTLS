@@ -3,7 +3,7 @@ import socket
 import struct
 import logging
 
-from stoptls.tcp.IMAP import IMAPProxyConn
+from stoptls.tcp.imap import IMAPProxyConn
 from stoptls.tcp.smtp import SMTPProxyConn
 
 
@@ -13,20 +13,21 @@ class TCPProxy(object):
     def __init__(self, *proxy_conn_factories, **cli_args):
         # TODO: process command line arguments
         self.conn_switcher = {
-            '25': SMTPProxyConn,
-            '143': IMAPProxyConn,
-            '587': SMTPProxyConn
+            25: SMTPProxyConn,
+            143: IMAPProxyConn,
+            587: SMTPProxyConn
         }
         super().__init__()
 
     async def __call__(self, client_reader, client_writer):
         dst_addr, dst_port = self.get_orig_dst_socket(client_writer)
+        dst_addr, dst_port = '127.0.0.1', 25
         logging.debug('Original destination: {}:{}'.format(dst_addr, dst_port))
         server_reader, server_writer = await asyncio.open_connection(dst_addr,
                                                                      dst_port)
         try:
-            self.conn_switcher[dst_port](client_reader, client_writer,
-                                         server_reader, server_writer).strip()
+            await self.conn_switcher[dst_port](client_reader, client_writer,
+                                               server_reader, server_writer).strip()
         except KeyError as e:
             raise Exception('No handler set up for destination port: {}'
                             .format(dst_port))

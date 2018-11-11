@@ -5,7 +5,7 @@ import logging
 import abc
 
 
-class TCPProxyConnection(abc.ABC):
+class TCPProxyConn(abc.ABC):
     ports = None
     command_re = None
     response_re = None
@@ -20,7 +20,9 @@ class TCPProxyConnection(abc.ABC):
 
     @abc.abstractmethod
     async def strip(self):
-        return
+        self.server_writer.close()
+        self.client_writer.close()
+        logging.debug('Connections closed')
 
     async def start_tls(self):
         self.server_writer.write('STARTTLS\n'.encode('ascii'))
