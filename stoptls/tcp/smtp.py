@@ -1,12 +1,9 @@
 import asyncio
-import logging
 import socket
 import re
+import logging
 
 from stoptls.tcp.base import TCPProxyConn
-from stoptls.tcp import regex
-
-logging.getLogger().setLevel(logging.DEBUG)
 
 
 class SMTPProxyConn(TCPProxyConn):
@@ -15,6 +12,7 @@ class SMTPProxyConn(TCPProxyConn):
     response_re = re.compile('^(?P<status_code>[0-9]{3})(?:(?P<line_cont>-)| )(?P<message>.*)?\r\n$')
 
     async def strip(self):
+        cls = type(self)
         banner = await self.server_reader.readline()
         logging.debug('Received banner: {}'.format(banner))
 
@@ -39,7 +37,7 @@ class SMTPProxyConn(TCPProxyConn):
         # Process EHLO response.
         # TODO: Move this logic into a method
         ehlo_response = await self.server_reader.readline()
-        ehlo_response_re = regex.SMTP_RESPONSE.fullmatch(ehlo_response.decode('ascii'))
+        ehlo_response_re = cls.response_re.fullmatch(ehlo_response.decode('ascii'))
         tls_supported = False
         while (not self.server_reader.at_eof() and
                ehlo_response_re and
@@ -49,7 +47,7 @@ class SMTPProxyConn(TCPProxyConn):
                 tls_supported = True
 
             ehlo_response = await self.server_reader.readline()
-            ehlo_response_re = regex.SMTP_RESPONSE.fullmatch(ehlo_response.decode('ascii'))
+            ehlo_response_re = cls.response_re.fullmatch(ehlo_response.decode('ascii'))
 
         if tls_supported:
             await self.start_tls()
@@ -58,7 +56,7 @@ class SMTPProxyConn(TCPProxyConn):
             client_data = await self.client_reader.readline()
             logging.debug('Received client data: {}'.format(client_data))
 
-            client_data_re = regex.SMTP_COMMAND.fullmatch(client_data.decode('ascii'))
+            client_data_re = cls.command_re.fullmatch(client_data.decode('ascii'))
             if self.client_reader.at_eof():
                 logging.debug('Client closed connection')
                 break
@@ -79,17 +77,17 @@ class SMTPProxyConn(TCPProxyConn):
             logging.debug('Writing server data to client...')
             await self.client_writer.drain()
 
-            server_data_re = regex.IMAP_RESPONSE.fullmatch(server_data.decode('ascii'))
+            server_data_re = cls.response_re.fullmatch(server_data.decode('ascii'))
 
             if client_data_re:
                 if client_data_re.group('cmd').upper() == 'EHLO':
                     # handle EHLO
-                    server_data_re = regex.SMTP_RESPONSE.fullmatch(server_data.decode('ascii'))
+                    server_data_re = cls.response_re.fullmatch(server_data.decode('ascii'))
                     while (not self.server_reader.at_eof() and
                            server_data_re and
                            server_data_re.group('line_cont')):
                         server_data = await self.server_reader.readline()
-                        server_data_re = regex.SMTP_RESPONSE.fullmatch(server_data.decode('ascii'))
+                        server_data_re = cls.response_re.fullmatch(server_data.decode('ascii'))
                         logging.debug('Received server data: {}'.format(server_data))
                         self.client_writer.write(server_data)
                         logging.debug('Writing server data to client...')
@@ -118,3 +116,18 @@ class SMTPProxyConn(TCPProxyConn):
                     await self.client_writer.drain()
 
         await super().strip()
+
+    async def start_tls(self):
+        self.server_writer.write('STARTTLS\n'.encode('ascii'))
+        await self.server_writer.drain()
+
+        tls_started = await self.server_reader.readline()
+        tls_started_re = type(self).response_re.fullmatch(tls_started.decode('ascii'))
+
+        if tls_started_re and \
+           tls_started_re.group('status_code') == '220':
+            logging.debug('Sucessfully upgraded to TLS!')
+            return await self.upgrade_connection()
+        else:
+            logging.debug('Failed to upgrade to TLS')
+            return False
