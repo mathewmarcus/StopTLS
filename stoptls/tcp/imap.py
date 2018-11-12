@@ -3,8 +3,6 @@ import logging
 
 from stoptls.tcp.base import TCPProxyConn
 
-logging.getLogger().setLevel(logging.DEBUG)
-
 
 class IMAPProxyConn(TCPProxyConn):
     protocol = 'IMAP'
