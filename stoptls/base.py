@@ -3,6 +3,8 @@ import asyncio
 
 
 class Proxy(abc.ABC):
+    protocol = None
+
     def __init__(self):
         super().__init__()
 
@@ -11,11 +13,11 @@ class Proxy(abc.ABC):
         return
 
     @classmethod
-    async def main(cls, port, cli_args):
-        proxy = cls(cli_args)
+    async def main(cls, port, cli_args, *args, **kwargs):
+        proxy = cls(*args, **kwargs)
         server = await asyncio.start_server(proxy, port=port)
 
-        print("Serving {protocol} on {port}...".format(protocol=cls.__name__.replace('Proxy', ''),
+        print("Serving {protocol} on {port}...".format(protocol=cls.protocol,
                                                        port=port))
 
         async with server:
