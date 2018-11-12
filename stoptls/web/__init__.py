@@ -8,6 +8,8 @@ from stoptls.cache import InMemoryCache
 
 
 class HTTPProxy(Proxy):
+    protocol = 'HTTP'
+
     def __init__(self):
         self._tcp_connector = aiohttp.TCPConnector(ttl_dns_cache=None)
         self.session = aiohttp.ClientSession(connector=self._tcp_connector,

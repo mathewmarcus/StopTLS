@@ -7,6 +7,7 @@ logging.getLogger().setLevel(logging.DEBUG)
 
 
 class IMAPProxyConn(TCPProxyConn):
+    protocol = 'IMAP'
     ports = (143,)
     command_re = re.compile('^(?P<tag>\S*) (?P<cmd>[A-Za-z]*)\r?\n$')
     response_re = re.compile('^(?P<tag>\S*) (?:(?P<ok>[Oo][Kk])|(?P<bad>[Bb][Aa][Dd])|(?P<no>[Nn][Oo]) )?(?P<response>.*)\r\n$')

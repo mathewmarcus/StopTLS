@@ -6,6 +6,7 @@ import abc
 
 
 class TCPProxyConn(abc.ABC):
+    protocol = None
     ports = None
     command_re = None
     response_re = None

@@ -7,6 +7,7 @@ from stoptls.tcp.base import TCPProxyConn
 
 
 class SMTPProxyConn(TCPProxyConn):
+    protocol = 'SMTP'
     ports = (25, 587)
     command_re = re.compile('^(?P<cmd>\S*)(?P<args> .*)\r?\n$')
     response_re = re.compile('^(?P<status_code>[0-9]{3})(?:(?P<line_cont>-)| )(?P<message>.*)?\r\n$')
