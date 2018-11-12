@@ -1,7 +1,7 @@
 import asyncio
 import argparse
 
-from stoptls.web import main as web_main
+from stoptls.web import HTTPProxy
 from stoptls.tcp import TCPProxy
 
 
@@ -24,7 +24,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     loop = asyncio.get_event_loop()
-    asyncio.ensure_future(web_main())
-    asyncio.ensure_future(TCPProxy.main(asyncio.start_server,
-                                        args.tcp_port))
+    asyncio.ensure_future(HTTPProxy.main(args.http_port,
+                                         args))
+    asyncio.ensure_future(TCPProxy.main(args.tcp_port,
+                                        args))
     loop.run_forever()
