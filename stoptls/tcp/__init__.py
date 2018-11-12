@@ -3,11 +3,12 @@ import socket
 import struct
 import logging
 
+from stoptls.base import Proxy
 from stoptls.tcp.imap import IMAPProxyConn
 from stoptls.tcp.smtp import SMTPProxyConn
 
 
-class TCPProxy(object):
+class TCPProxy(Proxy):
     SO_ORIGINAL_DST = 80
 
     def __init__(self, *proxy_conn_factories, **cli_args):
@@ -39,14 +40,3 @@ class TCPProxy(object):
         port, = struct.unpack('!h', sockaddr_in[2:4])
         address = socket.inet_ntoa(sockaddr_in[4:8])
         return address, port
-
-    @classmethod
-    async def main(cls, port, **cli_args):
-        proxy = cls(**cli_args)
-        server = await asyncio.start_server(proxy, port=port)
-
-        print("Serving {protocol} on {port}...".format(protocol=cls.__name__,
-                                                       port=port))
-
-        async with server:
-            await server.serve_forever()
