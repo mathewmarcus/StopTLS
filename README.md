@@ -91,10 +91,9 @@ It should be noted that `StopTLS` is very much a work in progress, and is essent
 2. Advanced configuration via an INI file
 3. Custom log traffic filters for all protocols via config file directives and/or user-supplied callables (functions, methods, etc)
 4. Support for additional, user-supplied protocols, by subclassing `stoptls.base.Proxy` and/or `stoptls.tcp.base.TCPProxyConn` abstract classes
-5. Support for additional types of SMTP/IMAP authentication methods
-6. Support for more complex, non-standard HTTP login mechanisms
-7. Packaging and distribution via `pip` and `PyPi` repository
-8. Integration testing with Docker
+5. Support for more complex, non-standard HTTP login mechanisms
+6. Packaging and distribution via `pip` and `PyPi` repository
+7. Integration testing with Docker
 
 ## Why?
 Why create yet another SSLstripping tool when...
