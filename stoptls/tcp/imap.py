@@ -8,7 +8,7 @@ class IMAPProxyConn(TCPProxyConn):
     protocol = 'IMAP'
     ports = (143,)
     command_re = re.compile('^(?P<tag>\S*) (?P<cmd>[A-Za-z]*)\r?\n$')
-    response_re = re.compile('^(?P<tag>\S*) (?:(?P<ok>[Oo][Kk])|(?P<bad>[Bb][Aa][Dd])|(?P<no>[Nn][Oo]) )?(?P<response>.*)\r\n$')
+    response_re = re.compile('^(?P<tag>\S*) (?:(?P<ok>[Oo][Kk])|(?P<bad>[Bb][Aa][Dd])|(?P<no>[Nn][Oo])|(?P<bye>[Bb][Yy][Ee]) )?(?P<response>.*)\r\n$')
     starttls_re = re.compile('( ?)STARTTLS( ?)', flags=re.IGNORECASE)
 
     async def strip(self):
@@ -72,7 +72,8 @@ class IMAPProxyConn(TCPProxyConn):
 
                 server_data_re = cls.response_re.fullmatch(server_data.decode('ascii'))
 
-                if server_data_re.group('tag') != '*' or \
+                if not server_data_re or \
+                   server_data_re.group('tag') != '*' or \
                    server_data_re.group('bad'):
                     break
 

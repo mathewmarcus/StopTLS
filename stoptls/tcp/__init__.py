@@ -25,7 +25,6 @@ class TCPProxy(Proxy):
 
     async def __call__(self, client_reader, client_writer):
         dst_addr, dst_port = self.get_orig_dst_socket(client_writer)
-        dst_port = 143
         logging.debug('Original destination: {}:{}'.format(dst_addr, dst_port))
         server_reader, server_writer = await asyncio.open_connection(dst_addr,
                                                                      dst_port)
